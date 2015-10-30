@@ -40,7 +40,6 @@ class Puppet::Resource::Catalog::LockingCompiler < Puppet::Resource::Catalog::Co
         raise "Compiles are locked, try again later."
       else
         lock_or_explode(reader_lockfile)
-        reader_lockfile.lock
       end
     end
   end
