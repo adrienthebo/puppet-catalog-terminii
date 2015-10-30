@@ -5,38 +5,49 @@ require 'puppet/util/lockfile'
 class Puppet::Resource::Catalog::LockingCompiler < Puppet::Resource::Catalog::Compiler
 
   def find(request)
-
-    # To avoid a TOCTOU bug we always acquire a lockfile and then check for the global/write lock. If we
-    # check for the global/write lock and then try to acquire a read lock, then we may add the read lock
-    # after the write lock has been stamped down.
-    #
-    # This locking is incredibly crude and something I whipped up quickly; this could be done better.
-    with_lock do
-      if global_lockfile.locked?
-        raise "Compiles are locked, try again later."
-      end
-      super
-    end
+    attempt_readlock
+    super
+  ensure
+    reader_lockfile.unlock
   end
 
   private
+
+  def attempt_readlock
+    spinlock(global_lockfile) do
+      if writer_lockfile.locked?
+        raise "Compiles are locked, try again later."
+      else
+        lock_or_explode(reader_lockfile)
+        reader_lockfile.lock
+      end
+    end
+  end
 
   def lockdir
     @lockdir ||= File.join(Puppet[:vardir], 'compiler-locks')
   end
 
   def global_lockfile
-    @lockfile ||= Puppet::Util::Lockfile.new(File.join(lockdir, "global-lock"))
+    @global_lockfile ||= Puppet::Util::Lockfile.new(File.join(lockdir, "global-lock"))
   end
 
-  def lockfile
-    @lockfile ||= Puppet::Util::Lockfile.new(File.join(lockdir, rand(512)))
+  def writer_lockfile
+    @writer_lockfile ||= Puppet::Util::Lockfile.new(File.join(lockdir, "writer-lock"))
   end
 
-  def with_lock(&block)
-    lockfile.lock
-    block.call
+  def reader_lockfile
+    @reader_lockfile ||= Puppet::Util::Lockfile.new(File.join(lockdir, "reader-#{rand(512)}-lock"))
+  end
+
+  def spinlock(lockfile, &block)
+    loop { break if lockfile.lock }
+    yield
   ensure
     lockfile.unlock
+  end
+
+  def lock_or_explode(lockfile)
+    lockfile.lock or raise "HOLY EXPLETIVES WHY COULDN'T I ACQUIRE LOCKFILE #{lockfile.file_path}?"
   end
 end
