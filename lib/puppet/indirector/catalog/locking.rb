@@ -2,6 +2,27 @@ require 'puppet/indirector/catalog/compiler'
 require 'puppet/util/lockfile'
 
 # A catalog terminus that implements a buggy reader/writer lock.
+#
+# Reader algorithm:
+#   1) Spinlock for the global lockfile
+#   2) When the global lockfile is acquired, check for the writer lock.
+#     2a) If the writer lock exists, log a warning, release the global lock, and abort
+#     2b) If the writer doesn't exist, create a reader lock and release the global lock
+#   3) Compile catalogs and whatnot
+#   4) Release the reader lock.
+#
+# Writer algorithm (implemented in the writer code, not done here):
+#   1) Spinlock for the global lockfile
+#   2) When the global lockfile is acquired, create the writer lock and release the global lock
+#   3) When all read locks have cleared, do writer things.
+#   4) Release the writer lock.
+#
+# Notes:
+#   - I haven't tested this.
+#   - Filesystem locking makes people sad because it's horrid
+#   - NFS + file locking = NOOOOPE
+#   - It's possible that readers will try to lock the same lockfile; if that happens then the
+#       reader that fails to get the lock will spuriously error.
 class Puppet::Resource::Catalog::LockingCompiler < Puppet::Resource::Catalog::Compiler
 
   def find(request)
